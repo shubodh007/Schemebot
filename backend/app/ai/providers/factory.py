@@ -194,8 +194,10 @@ class ProviderFactory:
 
                 except Exception as exc:
                     latency_ms = 0
-                    try: latency_ms = int((time.monotonic() - start) * 1000)  # type: ignore
-                    except: pass
+                    try:
+                        latency_ms = int((time.monotonic() - start) * 1000)
+                    except NameError:
+                        latency_ms = 0
                     breaker.record_failure()
 
                     CostTracker.record(

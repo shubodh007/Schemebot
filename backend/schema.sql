@@ -271,6 +271,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     chunk_index     INTEGER NOT NULL,
     content         TEXT NOT NULL,
     chunk_metadata  JSONB NOT NULL DEFAULT '{}',
+    embedding       vector(768),
     token_count     INTEGER NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

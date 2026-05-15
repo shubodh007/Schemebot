@@ -37,8 +37,13 @@ async def current_user(
     if user_id is None:
         raise AuthenticationError("Invalid token payload")
 
+    try:
+        parsed_id = uuid.UUID(user_id)
+    except (ValueError, AttributeError):
+        raise AuthenticationError("Invalid user ID in token")
+
     repo = UserRepository(session)
-    user = await repo.get_by_id(uuid.UUID(user_id))
+    user = await repo.get_by_id(parsed_id)
     if user is None:
         raise AuthenticationError("User not found")
 

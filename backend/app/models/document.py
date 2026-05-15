@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -20,9 +21,15 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.models.scheme import Scheme  # noqa: F401 — relationship reference
 
-
-
+try:
+    from sqlalchemy import types
+    from pgvector.sqlalchemy import Vector
+    _has_pgvector = True
+except ImportError:
+    Vector = None  # type: ignore
+    _has_pgvector = False
 class DocumentType(str, enum.Enum):
     AADHAAR = "aadhaar"
     PAN = "pan"
@@ -119,6 +126,9 @@ class DocumentChunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     chunk_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(768) if _has_pgvector else JSONB, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

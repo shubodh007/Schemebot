@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
-
-from duckduckgo_search import DDGS
 
 from app.ai.agents.base_agent import BaseAgent
 from app.ai.providers.base import StreamChunk
@@ -75,18 +74,24 @@ class SearchAgent(BaseAgent):
 
     async def _search_web(self, query: str) -> str:
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=5))
-                if not results:
-                    return ""
-                formatted = []
-                for i, r in enumerate(results, 1):
-                    formatted.append(
-                        f"[{i}] {r.get('title', '')}\n"
-                        f"    URL: {r.get('href', '')}\n"
-                        f"    Snippet: {r.get('body', '')}"
-                    )
-                return "\n\n".join(formatted)
+            from duckduckgo_search import DDGS
+            loop = asyncio.get_running_loop()
+
+            def _sync_search(q: str) -> str:
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(q, max_results=5))
+                    if not results:
+                        return ""
+                    formatted = []
+                    for i, r in enumerate(results, 1):
+                        formatted.append(
+                            f"[{i}] {r.get('title', '')}\n"
+                            f"    URL: {r.get('href', '')}\n"
+                            f"    Snippet: {r.get('body', '')}"
+                        )
+                    return "\n\n".join(formatted)
+
+            return await loop.run_in_executor(None, _sync_search, query)
         except Exception as exc:
             logger.warning("search.web_search_failed", error=str(exc))
             return ""

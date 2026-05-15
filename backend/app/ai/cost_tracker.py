@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Deque, Dict, List
 
 
 @dataclass
@@ -50,7 +51,7 @@ COST_PER_1K_TOKENS: Dict[str, Dict[str, float]] = {
 
 
 class CostTracker:
-    _records: List[ProviderUsageRecord] = []
+    _records: Deque[ProviderUsageRecord] = deque(maxlen=10000)
 
     @classmethod
     def record(

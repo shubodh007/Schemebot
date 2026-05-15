@@ -11,7 +11,7 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 
-from app.core.jwt_keys import get_signing_key
+from app.core.jwt_keys import get_signing_key, load_public_key
 
 ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
@@ -24,17 +24,24 @@ _public_key_pem: Optional[bytes] = None
 def _ensure_keys() -> None:
     global _private_key_pem, _public_key_pem
     if _private_key_pem is None:
-        _private_key_pem, _public_key_pem = get_signing_key()
+        priv, pub = get_signing_key()
+        _private_key_pem = priv
+        if pub:
+            _public_key_pem = pub
+        else:
+            _public_key_pem = priv  # fallback: use private as public (dev only)
 
 
 def get_private_key() -> bytes:
     _ensure_keys()
-    return _private_key_pem  # type: ignore
+    assert _private_key_pem is not None
+    return _private_key_pem
 
 
 def get_public_key() -> bytes:
     _ensure_keys()
-    return _public_key_pem or _private_key_pem  # type: ignore
+    assert _public_key_pem is not None
+    return _public_key_pem
 
 
 def hash_password(password: str) -> str:

@@ -28,6 +28,7 @@ class GeminiProvider(BaseProvider):
     ) -> None:
         super().__init__(api_key, model)
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+        self._headers = {"X-Goog-Api-Key": api_key, "Content-Type": "application/json"}
 
     async def stream(
         self,
@@ -36,11 +37,11 @@ class GeminiProvider(BaseProvider):
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> AsyncGenerator[StreamChunk, None]:
-        url = f"{self.base_url}/models/{self.model}:streamGenerateContent?alt=sse&key={self.api_key}"
+        url = f"{self.base_url}/models/{self.model}:streamGenerateContent?alt=sse"
         body = self._build_body(messages, system, temperature, max_tokens)
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
-            async with client.stream("POST", url, json=body) as response:
+            async with client.stream("POST", url, json=body, headers=self._headers) as response:
                 if response.status_code != 200:
                     yield StreamChunk(token="", finish_reason="error")
                     return
@@ -68,11 +69,11 @@ class GeminiProvider(BaseProvider):
         max_tokens: int = 4096,
     ) -> CompletionResult:
         start = time.monotonic()
-        url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
         body = self._build_body(messages, system, temperature, max_tokens)
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-            response = await client.post(url, json=body)
+            response = await client.post(url, json=body, headers=self._headers)
             latency = int((time.monotonic() - start) * 1000)
 
             if response.status_code != 200:
@@ -100,11 +101,11 @@ class GeminiProvider(BaseProvider):
         return total // 4
 
     async def embed(self, texts: List[str]) -> List[List[float]]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={self.api_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent"
         results = []
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             for text in texts:
-                resp = await client.post(url, json={"model": "models/text-embedding-004", "content": {"parts": [{"text": text}]}})
+                resp = await client.post(url, json={"model": "models/text-embedding-004", "content": {"parts": [{"text": text}]}}, headers=self._headers)
                 data = resp.json()
                 results.append(data.get("embedding", {}).get("values", []))
         return results
@@ -113,7 +114,7 @@ class GeminiProvider(BaseProvider):
         start = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                resp = await client.get(f"{self.base_url}/models?key={self.api_key}")
+                resp = await client.get(f"{self.base_url}/models", headers=self._headers)
                 latency = int((time.monotonic() - start) * 1000)
                 return ProviderHealth(healthy=resp.status_code == 200, latency_ms=latency)
         except Exception as exc:

@@ -8,10 +8,11 @@ from app.core.logging import logger
 
 class CrossEncoderReranker:
     _model = None
-    _load_lock = False
+    _load_lock: asyncio.Lock | None = None
 
     def __init__(self) -> None:
-        pass
+        if CrossEncoderReranker._load_lock is None:
+            CrossEncoderReranker._load_lock = asyncio.Lock()
 
     async def rerank(
         self,
@@ -22,9 +23,10 @@ class CrossEncoderReranker:
         if not candidates:
             return []
 
-        if CrossEncoderReranker._model is None and not CrossEncoderReranker._load_lock:
-            CrossEncoderReranker._load_lock = True
-            await self._load_model()
+        if CrossEncoderReranker._model is None:
+            async with CrossEncoderReranker._load_lock:
+                if CrossEncoderReranker._model is None:
+                    await self._load_model()
 
         if CrossEncoderReranker._model is None:
             return candidates[:top_k]

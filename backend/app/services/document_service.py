@@ -116,10 +116,10 @@ class DocumentService:
         page_count = 0
 
         if doc.mime_type == "application/pdf":
-            extracted_text, page_count = await self._extract_pdf_text(file_content)
+            extracted_text = await self._extract_pdf_text(file_content)
+            page_count = extracted_text.count("\n\n") + 1  # approximate page count
         elif doc.mime_type in ("image/jpeg", "image/png"):
             extracted_text, page_count = await self._extract_image_text(file_content)
-            page_count = 1
 
         doc.extracted_text = extracted_text
         doc.page_count = page_count
@@ -142,7 +142,7 @@ class DocumentService:
             scheme_matches=len(scheme_matches),
         )
 
-    async def _extract_pdf_text(self, content: bytes) -> Tuple[str, int]:
+    async def _extract_pdf_text(self, content: bytes) -> str:
         return await self._pdf_processor.extract_text(content), 0
 
     async def _extract_image_text(self, content: bytes) -> Tuple[str, int]:

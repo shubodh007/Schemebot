@@ -16,6 +16,7 @@ from app.models.conversation import Conversation, Message
 from app.models.scraping import ScrapingJob
 from app.repositories.user_repo import UserRepository
 from app.repositories.scheme_repo import SchemeRepository
+from app.schemas.admin import UpdateUserRequest, TriggerScrapeRequest
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -40,13 +41,12 @@ async def list_users(
 @router.patch("/users/{user_id}")
 async def update_user(
     user_id: UUID,
-    body: dict,
+    body: UpdateUserRequest,
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ):
     repo = UserRepository(session)
-    allowed = {"role", "status"}
-    update_data = {k: v for k, v in body.items() if k in allowed}
+    update_data = body.model_dump(exclude_none=True)
     updated = await repo.update(user_id, **update_data)
     if updated is None:
         from app.core.exceptions import NotFoundError
@@ -88,10 +88,10 @@ async def list_scraping_jobs(
 
 @router.post("/scraping/trigger")
 async def trigger_scrape(
-    body: dict,
+    body: TriggerScrapeRequest,
     user: User = Depends(require_admin),
 ):
-    source = body.get("source", "myscheme")
+    source = body.source
     from app.scraper.engine import ScrapingEngine
     from app.models.scraping import ScrapingJob
     from app.core.database import async_session_factory
