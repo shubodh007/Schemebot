@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
+from app.api.middleware.csrf import CSRFMiddleware, CSRFValidationError
 from app.api.middleware.error_handler import (
     LoggingMiddleware,
     govscheme_exception_handler,
@@ -16,7 +17,7 @@ from app.api.middleware.error_handler import (
     validation_exception_handler,
 )
 from app.api.middleware.rate_limiter import RateLimitMiddleware
-from app.api.routes import admin, auth, chat, documents, health, legal, schemes, search
+from app.api.routes import admin, auth, chat, documents, health, legal, password_reset, schemes, search
 from app.core.config import settings
 from app.core.database import check_database_health
 from app.core.exceptions import GovSchemeError
@@ -79,8 +80,10 @@ def create_app() -> FastAPI:
 
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(CSRFMiddleware, secret_key=settings.secret_key)
 
     app.add_exception_handler(GovSchemeError, govscheme_exception_handler)
+    app.add_exception_handler(CSRFValidationError, govscheme_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
     from fastapi.exceptions import RequestValidationError
@@ -91,6 +94,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix=prefix)
     app.include_router(auth.router, prefix=prefix)
+    app.include_router(password_reset.router, prefix=prefix)
     app.include_router(schemes.router, prefix=prefix)
     app.include_router(chat.router, prefix=prefix)
     app.include_router(documents.router, prefix=prefix)

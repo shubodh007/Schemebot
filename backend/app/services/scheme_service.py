@@ -1,22 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.exceptions import EligibilityEngineError, NotFoundError
 from app.core.logging import logger
-from app.models.scheme import EligibilityOp, Scheme
+from app.models.scheme import Scheme
 from app.repositories.scheme_repo import (
     SavedSchemeRepository,
     SchemeCategoryRepository,
     SchemeRepository,
 )
 from app.schemas.scheme import EligibilityMatch, ProfileOverride
+from app.services.eligibility_evaluator import EligibilityEvaluator
 
 
 class SchemeService:
@@ -80,11 +81,22 @@ class SchemeService:
         logger.info("eligibility.check.started", user_id=str(user_id))
 
         all_schemes = await self.scheme_repo.get_matching_schemes(merged)
+        evaluator = EligibilityEvaluator()
+
+        eval_results = await asyncio.gather(*[
+            evaluator.evaluate(scheme, merged) for scheme in all_schemes
+        ])
 
         matches: List[EligibilityMatch] = []
-        for scheme in all_schemes:
-            result = self._evaluate_scheme_rules(scheme, merged)
-            matches.append(result)
+        for eval_result, scheme in zip(eval_results, all_schemes):
+            matches.append(EligibilityMatch(
+                scheme=scheme,
+                score=eval_result.score,
+                eligible=eval_result.eligible,
+                matching_rules=[r.reason for r in eval_result.rule_results if r.passed],
+                failing_rules=[r.reason for r in eval_result.rule_results if not r.passed],
+                missing_fields=eval_result.missing_fields,
+            ))
 
         matches.sort(key=lambda m: m.score, reverse=True)
 
@@ -108,128 +120,6 @@ class SchemeService:
             "checked_at": datetime.now(timezone.utc),
             "profile_completeness": completeness,
         }
-
-    def _evaluate_scheme_rules(
-        self, scheme: Scheme, profile: Dict[str, Any]
-    ) -> EligibilityMatch:
-        matching_rules: List[str] = []
-        failing_rules: List[str] = []
-        missing_fields: List[str] = []
-        total_rules = len(scheme.eligibility_rules)
-
-        if total_rules == 0:
-            return EligibilityMatch(
-                scheme=scheme,
-                score=0.5,
-                eligible=False,
-                matching_rules=["No eligibility rules defined for this scheme"],
-                failing_rules=[],
-                missing_fields=[],
-            )
-
-        passed = 0
-        for rule in scheme.eligibility_rules:
-            user_value = profile.get(rule.field_name)
-            if user_value is None:
-                if rule.is_mandatory:
-                    failing_rules.append(
-                        f"{rule.field_name}: missing information"
-                    )
-                    missing_fields.append(rule.field_name)
-                else:
-                    matching_rules.append(
-                        f"{rule.field_name}: optional rule, skipped (no data)"
-                    )
-                    passed += 1
-                continue
-
-            rule_value = rule.value
-            if isinstance(rule_value, str):
-                try:
-                    rule_value = __import__("json").loads(rule_value)
-                except (__import__("json").JSONDecodeError, TypeError):
-                    pass
-
-            passed_rule = self._evaluate_rule(rule.field_name, rule.operator, user_value, rule_value)
-
-            if passed_rule:
-                matching_rules.append(
-                    f"{rule.field_name}: {user_value} {rule.operator.value} {rule_value}"
-                )
-                if rule.is_mandatory or True:
-                    passed += 1
-            else:
-                failing_rules.append(
-                    f"{rule.field_name}: {user_value} does not satisfy {rule.operator.value} {rule_value}"
-                )
-
-        score = passed / max(total_rules, 1) if total_rules > 0 else 0
-        mandatory_failures = [
-            r for r, ru in zip(scheme.eligibility_rules, matching_rules + failing_rules)
-            if ru in failing_rules and r.is_mandatory
-        ]
-        eligible = len(mandatory_failures) == 0 and score >= 0.3
-
-        return EligibilityMatch(
-            scheme=scheme,
-            score=round(score, 4),
-            eligible=eligible,
-            matching_rules=matching_rules,
-            failing_rules=failing_rules,
-            missing_fields=missing_fields,
-        )
-
-    def _evaluate_rule(
-        self, field_name: str, operator: EligibilityOp, user_value: Any, rule_value: Any
-    ) -> bool:
-        try:
-            if isinstance(rule_value, dict):
-                if "min" in rule_value and "max" in rule_value:
-                    lower = rule_value["min"]
-                    upper = rule_value["max"]
-                    return lower <= user_value <= upper
-                if "values" in rule_value:
-                    rule_value = rule_value["values"]
-
-            if isinstance(user_value, str) and isinstance(rule_value, str):
-                user_value = user_value.lower()
-                rule_value = rule_value.lower()
-
-            if operator == EligibilityOp.EQ:
-                return str(user_value).lower() == str(rule_value).lower()
-            elif operator == EligibilityOp.NEQ:
-                return str(user_value).lower() != str(rule_value).lower()
-            elif operator == EligibilityOp.LT:
-                return float(user_value) < float(rule_value)
-            elif operator == EligibilityOp.LTE:
-                return float(user_value) <= float(rule_value)
-            elif operator == EligibilityOp.GT:
-                return float(user_value) > float(rule_value)
-            elif operator == EligibilityOp.GTE:
-                return float(user_value) >= float(rule_value)
-            elif operator == EligibilityOp.IN:
-                values = rule_value if isinstance(rule_value, list) else [rule_value]
-                return str(user_value).lower() in [str(v).lower() for v in values]
-            elif operator == EligibilityOp.NOT_IN:
-                values = rule_value if isinstance(rule_value, list) else [rule_value]
-                return str(user_value).lower() not in [str(v).lower() for v in values]
-            elif operator == EligibilityOp.BETWEEN:
-                if isinstance(rule_value, list) and len(rule_value) == 2:
-                    return float(rule_value[0]) <= float(user_value) <= float(rule_value[1])
-                return False
-            elif operator == EligibilityOp.CONTAINS:
-                return str(rule_value).lower() in str(user_value).lower()
-            else:
-                logger.warning("eligibility.unknown_operator", operator=str(operator))
-                return False
-        except (ValueError, TypeError, ZeroDivisionError) as exc:
-            logger.warning(
-                "eligibility.rule_evaluation_failed",
-                field=field_name,
-                op=str(operator),
-                error=str(exc),
-            )
-            return False
 
     async def save_scheme(
         self, user_id: UUID, scheme_id: UUID, notes: Optional[str] = None

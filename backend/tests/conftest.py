@@ -2,20 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, AsyncIterator, Dict
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
+from testcontainers.postgres import PostgresContainer
 
 from app.core.database import Base, get_session
 from app.core.security import create_access_token, hash_password
 from app.main import create_app
 from app.models.user import User, UserProfile, UserRole, UserStatus
-
-TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
 
 @pytest.fixture(scope="session")
@@ -25,27 +30,39 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    engine = create_async_engine(
-        TEST_DATABASE_URL,
-        poolclass=NullPool,
-    )
+@pytest_asyncio.fixture(scope="session")
+async def db_engine():
+    container = PostgresContainer("pgvector/pgvector:pg16")
+    container.start()
+
+    url = container.get_connection_url().replace("psycopg2", "asyncpg")
+    engine = create_async_engine(url, echo=False, poolclass=NullPool)
+
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
 
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    async with session_factory() as session:
-        yield session
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    yield engine
 
     await engine.dispose()
+    container.stop()
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture
+async def db_session(db_engine) -> AsyncIterator[AsyncSession]:
+    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
+
+    async with session_factory() as session:
+        async with session.begin():
+            yield session
+            await session.rollback()
+
+    async with db_engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(text(f"TRUNCATE TABLE {table.name} CASCADE"))
+
+
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app = create_app()
 
@@ -60,7 +77,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     app.dependency_overrides.clear()
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture
 async def test_user(db_session: AsyncSession) -> User:
     user = User(
         email="test@example.com",
@@ -81,13 +98,13 @@ async def test_user(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture
 async def auth_headers(test_user: User) -> Dict[str, str]:
     token = create_access_token(str(test_user.id), test_user.role.value)
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture
 async def admin_user(db_session: AsyncSession) -> User:
     user = User(
         email="admin@example.com",
