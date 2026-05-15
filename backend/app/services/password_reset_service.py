@@ -14,6 +14,7 @@ from app.core.logging import logger
 from app.core.redis_client import RedisClient
 from app.core.security import hash_password
 from app.repositories.user_repo import UserRepository, SessionRepository
+from app.services.email_service import email_service
 
 
 class ResetTokenInvalidError(GovSchemeError):
@@ -46,6 +47,7 @@ class PasswordResetService:
             ttl=self.TOKEN_TTL,
         )
 
+        await email_service.send_password_reset(email, raw_token)
         logger.info("password_reset.token_generated", user_id=str(user.id))
 
     async def validate_token(self, raw_token: str) -> UUID:

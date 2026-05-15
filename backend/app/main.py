@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
+from app.api.middleware.correlation_id import CorrelationIDMiddleware
 from app.api.middleware.csrf import CSRFMiddleware, CSRFValidationError
 from app.api.middleware.error_handler import (
     LoggingMiddleware,
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
         expose_headers=["X-RateLimit-Remaining", "X-RateLimit-Limit"],
     )
 
+    app.add_middleware(CorrelationIDMiddleware)
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)

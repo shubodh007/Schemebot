@@ -3,28 +3,38 @@ from __future__ import annotations
 import hashlib
 import secrets
 import string
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import bcrypt
 import jwt
-from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 
-from app.core.config import Settings, settings
-from app.core.logging import logger
+from app.core.jwt_keys import get_signing_key
 
-ALGORITHM = "HS256"
+ALGORITHM = "RS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 30
-RESET_TOKEN_EXPIRE_HOURS = 1
+
+_private_key_pem: Optional[bytes] = None
+_public_key_pem: Optional[bytes] = None
 
 
-def get_signing_key(override_key: Optional[str] = None) -> str:
-    key = override_key or settings.secret_key
-    if len(key) < 32:
-        key = hashlib.sha256(key.encode()).hexdigest()
-    return key
+def _ensure_keys() -> None:
+    global _private_key_pem, _public_key_pem
+    if _private_key_pem is None:
+        _private_key_pem, _public_key_pem = get_signing_key()
+
+
+def get_private_key() -> bytes:
+    _ensure_keys()
+    return _private_key_pem  # type: ignore
+
+
+def get_public_key() -> bytes:
+    _ensure_keys()
+    return _public_key_pem or _private_key_pem  # type: ignore
 
 
 def hash_password(password: str) -> str:
@@ -45,7 +55,6 @@ def create_access_token(
     user_id: str,
     role: str,
     expires_delta: Optional[timedelta] = None,
-    override_key: Optional[str] = None,
 ) -> str:
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -59,15 +68,18 @@ def create_access_token(
         "type": "access",
     }
 
-    key = get_signing_key(override_key)
-    return jwt.encode(payload, key, algorithm=ALGORITHM)
+    private_key = serialization.load_pem_private_key(
+        get_private_key(),
+        password=None,
+        backend=default_backend(),
+    )
+    return jwt.encode(payload, private_key, algorithm=ALGORITHM)
 
 
 def create_refresh_token(
     user_id: str,
     session_id: str,
     expires_delta: Optional[timedelta] = None,
-    override_key: Optional[str] = None,
 ) -> str:
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
@@ -81,20 +93,23 @@ def create_refresh_token(
         "type": "refresh",
     }
 
-    key = get_signing_key(override_key)
-    return jwt.encode(payload, key, algorithm=ALGORITHM)
+    private_key = serialization.load_pem_private_key(
+        get_private_key(),
+        password=None,
+        backend=default_backend(),
+    )
+    return jwt.encode(payload, private_key, algorithm=ALGORITHM)
 
 
-def decode_token(
-    token: str,
-    verify_expiration: bool = True,
-    override_key: Optional[str] = None,
-) -> Dict[str, Any]:
-    key = get_signing_key(override_key)
+def decode_token(token: str, verify_expiration: bool = True) -> Dict[str, Any]:
     try:
+        public_key = serialization.load_pem_public_key(
+            get_public_key(),
+            backend=default_backend(),
+        )
         payload = jwt.decode(
             token,
-            key,
+            public_key,
             algorithms=[ALGORITHM],
             options={"verify_exp": verify_expiration},
         )
@@ -111,12 +126,6 @@ def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def generate_reset_token() -> Tuple[str, str]:
-    raw = secrets.token_urlsafe(32)
-    hashed = hashlib.sha256(raw.encode()).hexdigest()
-    return raw, hashed
-
-
 def generate_secure_id(length: int = 32) -> str:
     return secrets.token_hex(length)
 
@@ -124,18 +133,3 @@ def generate_secure_id(length: int = 32) -> str:
 def generate_password(length: int = 20) -> str:
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     return "".join(secrets.choice(alphabet) for _ in range(length))
-
-
-def create_api_key_fernet() -> Fernet:
-    key = hashlib.sha256(settings.secret_key.encode()).digest()
-    return Fernet(Fernet.generate_key())
-
-
-def encrypt_api_key(api_key: str) -> str:
-    f = create_api_key_fernet()
-    return f.encrypt(api_key.encode()).decode()
-
-
-def decrypt_api_key(encrypted: str) -> str:
-    f = create_api_key_fernet()
-    return f.decrypt(encrypted.encode()).decode()
