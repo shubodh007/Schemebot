@@ -1,0 +1,48 @@
+{
+  "app.name": "गॉवस्कीम AI",
+  "app.tagline": "हर सरकारी योजना खोजें जिसके आप पात्र हैं",
+  "app.description": "AI-संचालित प्लेटफ़ॉर्म जो भारतीय नागरिकों को कल्याणकारी योजनाओं को खोजने, समझने और आवेदन करने में मदद करता है",
+
+  "nav.home": "होम",
+  "nav.chat": "चैट",
+  "nav.schemes": "योजनाएं",
+  "nav.eligibility": "पात्रता",
+  "nav.documents": "दस्तावेज़",
+  "nav.legal": "कानूनी सहायता",
+  "nav.saved": "सुरक्षित योजनाएं",
+  "nav.history": "इतिहास",
+  "nav.settings": "सेटिंग्स",
+  "nav.admin": "एडमिन",
+
+  "auth.login": "साइन इन",
+  "auth.register": "खाता बनाएं",
+  "auth.logout": "साइन आउट",
+  "auth.email": "ईमेल पता",
+  "auth.password": "पासवर्ड",
+  "auth.full_name": "पूरा नाम",
+  "auth.login_title": "वापस स्वागत है",
+  "auth.register_title": "अपना खाता बनाएं",
+
+  "chat.placeholder": "किसी भी योजना के बारे में पूछें...",
+  "chat.new": "नई चैट",
+  "chat.send": "भेजें",
+  "chat.stop": "रोकें",
+
+  "schemes.title": "सरकारी योजनाएं",
+  "schemes.search": "योजनाएं खोजें...",
+  "schemes.no_results": "कोई योजना नहीं मिली",
+  "schemes.save": "सुरक्षित करें",
+  "schemes.saved": "सुरक्षित",
+
+  "eligibility.title": "पात्रता जांच",
+  "eligibility.check": "पात्रता जांचें",
+
+  "documents.upload": "दस्तावेज़ अपलोड करें",
+  "documents.drag_drop": "अपना दस्तावेज़ यहां छोड़ें",
+
+  "common.loading": "लोड हो रहा है...",
+  "common.error": "कुछ गलत हो गया",
+  "common.retry": "पुनः प्रयास करें",
+  "common.save": "सहेजें",
+  "common.search": "खोजें"
+}
