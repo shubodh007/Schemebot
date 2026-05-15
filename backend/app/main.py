@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.database import check_database_health
 from app.core.exceptions import GovSchemeError
 from app.core.logging import logger, setup_logging
+from app.core.metrics import metrics_router
 from app.core.redis_client import redis_client
 
 
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(legal.router, prefix=prefix)
     app.include_router(search.router, prefix=prefix)
     app.include_router(admin.router, prefix=prefix)
+    app.include_router(metrics_router, prefix=prefix)
 
     @app.get("/")
     async def root():

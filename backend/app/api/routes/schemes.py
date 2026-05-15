@@ -6,24 +6,23 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.middleware.auth_middleware import current_user, optional_user
+from app.api.middleware.auth_middleware import current_user
 from app.core.database import get_session
 from app.core.exceptions import NotFoundError
+from app.core.redis_client import redis_client
 from app.models.user import User
 from app.repositories.scheme_repo import SavedSchemeRepository
 from app.repositories.user_repo import ProfileRepository
 from app.schemas.scheme import (
     CompareSchemesRequest,
-    ComparisonResult,
     EligibilityCheckRequest,
-    EligibilityCheckResponse,
     SaveSchemeRequest,
     SavedSchemeResponse,
     SchemeDetail,
     SchemeDetailWithEligibility,
     SchemeEligibilityResponse,
-    SchemeListResponse,
 )
+from app.services.cache_service import SchemeListCache
 from app.services.scheme_service import SchemeService
 
 router = APIRouter(prefix="/schemes", tags=["schemes"])
@@ -39,6 +38,13 @@ async def list_schemes(
     limit: int = 20,
     session: AsyncSession = Depends(get_session),
 ):
+    cache = SchemeListCache(redis_client)
+    params = {"query": query, "category": category_id, "level": level, "state": state_code, "page": page, "limit": limit}
+
+    cached = await cache.get_list(params)
+    if cached is not None:
+        return cached
+
     service = SchemeService(session)
     cat_uuid = UUID(category_id) if category_id else None
     result = await service.search_schemes(
@@ -49,6 +55,8 @@ async def list_schemes(
         page=page,
         limit=limit,
     )
+
+    await cache.set_list(params, result)
     return result
 
 

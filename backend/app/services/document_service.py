@@ -22,9 +22,10 @@ from app.core.exceptions import (
 )
 from app.core.logging import logger
 from app.models.document import Document, DocumentChunk
-from app.repositories.conversation_repo import MessageRepository
+from app.models.scheme import Scheme
 from app.repositories.scheme_repo import SchemeRepository
 from app.schemas.document import SchemeMatchResult
+from app.services.async_pdf_processor import AsyncPDFProcessor
 
 ALLOWED_MAGIC_BYTES: Dict[str, bytes] = {
     "application/pdf": b"%PDF",
@@ -37,6 +38,7 @@ class DocumentService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.scheme_repo = SchemeRepository(session)
+        self._pdf_processor = AsyncPDFProcessor()
 
     async def validate_and_upload(
         self,
@@ -114,7 +116,7 @@ class DocumentService:
         page_count = 0
 
         if doc.mime_type == "application/pdf":
-            extracted_text, page_count = self._extract_pdf_text(file_content)
+            extracted_text, page_count = await self._extract_pdf_text(file_content)
         elif doc.mime_type in ("image/jpeg", "image/png"):
             extracted_text, page_count = await self._extract_image_text(file_content)
             page_count = 1
@@ -140,29 +142,8 @@ class DocumentService:
             scheme_matches=len(scheme_matches),
         )
 
-    def _extract_pdf_text(self, content: bytes) -> Tuple[str, int]:
-        try:
-            reader = PdfReader(io.BytesIO(content))
-        except Exception as exc:
-            raise FileValidationError(f"Invalid PDF file: {str(exc)}")
-
-        page_count = len(reader.pages)
-        if page_count > 200:
-            raise FileValidationError(f"PDF has {page_count} pages, maximum allowed is 200")
-
-        total_chars = 0
-        max_chars = 500_000
-        pages = []
-
-        for page in reader.pages:
-            text = page.extract_text() or ""
-            pages.append(text)
-            total_chars += len(text)
-            if total_chars > max_chars:
-                pages.append(f"\n[Document truncated at {max_chars} characters]")
-                break
-
-        return "\n\n".join(pages), min(page_count, 200)
+    async def _extract_pdf_text(self, content: bytes) -> Tuple[str, int]:
+        return await self._pdf_processor.extract_text(content), 0
 
     async def _extract_image_text(self, content: bytes) -> Tuple[str, int]:
         image = Image.open(io.BytesIO(content))
