@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from app.ai.circuit_breaker import CircuitBreakerRegistry
 from app.ai.cost_tracker import CostTracker
-from app.ai.providers.base import BaseProvider
+from app.ai.prompt_cache import PromptCache
+from app.ai.providers.base import BaseProvider, CompletionResult, Message, StreamChunk
 from app.ai.providers.anthropic_claude import AnthropicClaudeProvider
 from app.ai.providers.openrouter_provider import OpenRouterProvider
 from app.core.config import AIProvider, settings
 from app.core.exceptions import AIProviderUnavailableError
 from app.core.logging import logger
+from app.core.redis_client import redis_client
 
 MODEL_USE_CASE_MAP: Dict[str, str] = {
     "eligibility": settings.ai_eligibility_model,
@@ -146,13 +148,15 @@ class ProviderFactory:
         system: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-    ) -> Any:
+    ) -> CompletionResult:
         use_case_model = MODEL_USE_CASE_MAP.get(use_case, settings.ai_chat_model)
-        models_to_try = [
-            use_case_model,
-            settings.ai_chat_model,
-        ]
+        models_to_try = [use_case_model, settings.ai_chat_model]
         errors: List[str] = []
+
+        cache = PromptCache(redis_client)
+        cached = await cache.get(use_case_model, system, messages, temperature, use_case)
+        if cached:
+            return cached
 
         for model in models_to_try:
             for provider_name in FALLBACK_CHAIN:
@@ -184,10 +188,14 @@ class ProviderFactory:
                         success=True,
                     )
 
+                    await cache.set(use_case_model, system, messages, temperature, use_case, result)
+
                     return result
 
                 except Exception as exc:
-                    latency = int((time.monotonic() - start) * 1000) if 'start' in dir() else 0
+                    latency_ms = 0
+                    try: latency_ms = int((time.monotonic() - start) * 1000)  # type: ignore
+                    except: pass
                     breaker.record_failure()
 
                     CostTracker.record(
@@ -195,7 +203,7 @@ class ProviderFactory:
                         model=model,
                         prompt_tokens=0,
                         completion_tokens=0,
-                        latency_ms=latency,
+                        latency_ms=latency_ms,
                         success=False,
                     )
 
@@ -207,6 +215,60 @@ class ProviderFactory:
             provider=",".join(FALLBACK_CHAIN),
             model=use_case,
             original_error=f"All fallbacks failed: {'; '.join(errors)}",
+        )
+
+    @classmethod
+    async def stream_with_fallback(
+        cls,
+        use_case: str,
+        messages: List[Message],
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        use_case_model = MODEL_USE_CASE_MAP.get(use_case, settings.ai_chat_model)
+        models_to_try = [use_case_model, settings.ai_chat_model]
+        used_fallback = False
+
+        for model in models_to_try:
+            for provider_name in FALLBACK_CHAIN:
+                breaker = CircuitBreakerRegistry.get(f"provider:{provider_name}")
+                if not breaker.allow_request():
+                    continue
+
+                try:
+                    provider = cls.get_provider(provider_name, model)
+
+                    collected: List[str] = []
+                    async for chunk in provider.stream(
+                        messages=messages,
+                        system=system,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ):
+                        if chunk.token:
+                            collected.append(chunk.token)
+                        if chunk.finish_reason == "error":
+                            raise ConnectionError(f"Stream failed on {provider_name}/{model}")
+                        yield chunk
+
+                    breaker.record_success()
+
+                    if used_fallback:
+                        full_text = "".join(collected)
+                        CostTracker.record(provider=provider_name, model=provider.model, prompt_tokens=0, completion_tokens=len(full_text.split()), latency_ms=0, success=True)
+                    return
+
+                except Exception as exc:
+                    breaker.record_failure()
+                    used_fallback = True
+                    logger.warning("stream.fallback", provider=provider_name, model=model, error=str(exc))
+                    continue
+
+        raise AIProviderUnavailableError(
+            provider=",".join(FALLBACK_CHAIN),
+            model=use_case,
+            original_error="All providers failed during streaming",
         )
 
     @classmethod

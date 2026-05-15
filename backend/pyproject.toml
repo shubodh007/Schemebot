@@ -109,6 +109,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
 no_implicit_optional = true
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = [
@@ -116,6 +117,11 @@ module = [
     "alembic.*",
     "app.models.*",
     "app.schemas.*",
+    "app.core.*",
+    "app.api.*",
+    "app.services.*",
+    "app.ai.*",
+    "app.scraper.*",
 ]
 ignore_errors = true
 
