@@ -29,6 +29,9 @@ out/
 *.swp
 *.swo
 
+# mypy
+.mypy_cache/
+
 # OS
 .DS_Store
 Thumbs.db
